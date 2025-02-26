@@ -1,0 +1,10 @@
+[package]
+name = "serial"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serialport = "4.2"
+eframe = "0.22"
+egui = "0.22"
+libc = "0.2"
