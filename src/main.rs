@@ -263,7 +263,7 @@ impl SerialMonitorApp {
     }
 
     fn parse_data(&mut self, line: &str) {
-        if !self.plot_window.is_open {
+        if !self.plot_window.is_open || self.plot_window.is_paused {  // 检查暂停状态
             return;
         }
 
@@ -271,7 +271,6 @@ impl SerialMonitorApp {
         let line = line.trim();
         let mut values = Vec::new();
 
-        // 使用更简单的解析逻辑
         if line.starts_with("Pace: FL:") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             for part in parts {
@@ -283,10 +282,9 @@ impl SerialMonitorApp {
 
         println!("Found {} values: {:?}", values.len(), values);
 
-        // 更新图表数据
         if values.len() == 4 {
             for (i, &value) in values.iter().enumerate() {
-                self.plot_window.plot_data[i].push(value);
+                self.plot_window.plot_data[i].push(value, self.plot_window.max_points);
                 println!("Updated plot {} with value {}", i, value);
             }
         }
@@ -304,6 +302,14 @@ impl SerialMonitorApp {
                 ui.horizontal(|ui| {
                     ui.label("Format:");
                     ui.text_edit_singleline(&mut self.plot_window.format);
+                    ui.separator();
+                    ui.label("Max Points:");
+                    ui.add(egui::DragValue::new(&mut self.plot_window.max_points)
+                        .speed(10)
+                        .clamp_range(100..=10000));
+                    if ui.button(if self.plot_window.is_paused { "Resume" } else { "Pause" }).clicked() {
+                        self.plot_window.is_paused = !self.plot_window.is_paused;
+                    }
                     if ui.button("Clean Plot").clicked() {
                         for plot_data in &mut self.plot_window.plot_data {
                             plot_data.values.clear();
@@ -312,6 +318,11 @@ impl SerialMonitorApp {
                         }
                     }
                 });
+                
+                // 添加暂停状态显示
+                if self.plot_window.is_paused {
+                    ui.label(egui::RichText::new("PAUSED").color(egui::Color32::RED));
+                }
 
                 // 添加调试信息显示
                 for i in 0..4 {
@@ -363,13 +374,19 @@ struct PlotData {
 }
 
 impl PlotData {
-    fn push(&mut self, value: f64) {
+    fn push(&mut self, value: f64, max_points: usize) {
         if self.start_time.is_none() {
             self.start_time = Some(std::time::Instant::now());
         }
         let time = self.start_time.unwrap().elapsed().as_secs_f64();
         self.times.push(time);
         self.values.push(value);
+        
+        // Remove oldest points if exceeding max_points
+        if self.values.len() > max_points {
+            self.values.remove(0);
+            self.times.remove(0);
+        }
     }
 
     fn get_points(&self) -> PlotPoints {
@@ -385,6 +402,8 @@ struct PlotWindow {
     format: String,
     plot_data: [PlotData; 4],
     names: [&'static str; 4],
+    max_points: usize,
+    is_paused: bool,  // 添加暂停状态
 }
 
 impl Default for PlotWindow {
@@ -394,6 +413,8 @@ impl Default for PlotWindow {
             format: String::from("Pace: FL: %% FR: %% RL: %% RR: %%"),
             plot_data: Default::default(),
             names: ["FL", "FR", "RL", "RR"],
+            max_points: 1000,
+            is_paused: false,  // 初始不暂停
         }
     }
 }
