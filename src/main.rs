@@ -146,6 +146,9 @@ impl eframe::App for SerialMonitorApp {
                 if ui.button("Clean").clicked() {
                     self.received_data.clear();
                 }
+                if ui.button("Reset MCU").clicked() && self.port.is_some() {
+                    self.reset_device();
+                }
             });
         });
 
@@ -165,9 +168,17 @@ impl SerialMonitorApp {
 
         match serialport::new(&self.selected_port, self.baud_rate)
             .timeout(Duration::from_millis(10))
+            .data_bits(serialport::DataBits::Eight)
+            .flow_control(serialport::FlowControl::None)
+            .parity(serialport::Parity::None)
+            .stop_bits(serialport::StopBits::One)
             .open()
         {
-            Ok(port) => {
+            Ok(mut port) => {
+                // Set DTR and RTS after port is opened
+                let _ = port.write_data_terminal_ready(false);
+                let _ = port.write_request_to_send(false);
+                
                 let port = Arc::new(Mutex::new(port));
                 let port_clone = Arc::clone(&port);
                 let (tx, rx) = mpsc::channel();
@@ -183,13 +194,23 @@ impl SerialMonitorApp {
                                         let _ = tx.send(s);
                                     }
                                 }
-                                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                                Err(_) => break,
+                                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                                    continue;
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(format!("Error: {}\n", e));
+                                    thread::sleep(Duration::from_millis(100));
+                                    let _ = port.clear(serialport::ClearBuffer::All);
+                                }
                             }
                         }
                         thread::sleep(Duration::from_millis(10));
                     }
                 });
+
+                if let Ok(mut port) = port.lock() {
+                    let _ = port.clear(serialport::ClearBuffer::All);
+                }
 
                 self.port = Some(port);
                 self.rx = Some(rx);
@@ -317,6 +338,19 @@ impl SerialMonitorApp {
                         });
                 }
             });
+    }
+
+    fn reset_device(&mut self) {
+        if let Some(port) = &self.port {
+            if let Ok(mut port) = port.lock() {
+                // Reset sequence
+                let _ = port.clear(serialport::ClearBuffer::All);
+                let _ = port.write_data_terminal_ready(true);
+                thread::sleep(Duration::from_millis(100));
+                let _ = port.write_data_terminal_ready(false);
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
     }
 }
 
